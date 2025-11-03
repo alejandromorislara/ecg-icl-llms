@@ -1,0 +1,95 @@
+# Configuration for Toy Experiment (Task 1: Symbolic ECG Sequences)
+# This experiment validates the ICL hypothesis on a simplified task
+
+experiment:
+  name: "toy_experiment_task1"
+  description: "Symbolic sequence classification for ICL validation"
+  task: 1  # Task 1: symbolic text sequences
+  
+data:
+  # Data directories
+  data_dir: "data/processed/toy_experiment"
+  output_dir: "outputs/toy_experiment"
+  
+  # Dataset generation parameters
+  generation:
+    n_test_samples: 999
+    n_ood_samples: 300
+    n_icl_samples: 8  # per class
+    sequence_length: 100
+    
+    # In-distribution ranges
+    brady_range: [4, 7]
+    normal_range: [8, 11]
+    tachy_range: [12, 16]
+    
+    # OOD ranges (shifted distribution)
+    ood_brady_range: [2, 5]
+    ood_normal_range: [9, 10]
+    ood_tachy_range: [14, 20]
+
+icl:
+  # ICL evaluation parameters
+  approach: "regular"  # 'regular' or 'cbm'
+  n_shots: [0, 1, 2, 4, 8]  # Different shot configurations to test
+  
+  # Model configuration
+  model:
+    name: "local-model"
+    base_url: "http://127.0.0.1:1234/v1"
+    temperature: 0.1
+    max_tokens: 500
+    
+  # Evaluation
+  evaluate_ood: true  # Also evaluate on OOD test set
+  
+prompts:
+  # Prompt template directory
+  prompts_dir: "src/prompts/task1"
+
+results:
+  # Results storage
+  save_predictions: true
+  save_metrics: true
+  save_plots: true
+
+# Expected performance (for validation)
+expected_results:
+  baseline_accuracy: 0.33  # Random chance
+  target_accuracy: 0.80    # Target for successful ICL
+  
+# Experiment stages (for full pipeline)
+stages:
+  - name: "generate_data"
+    enabled: true
+    description: "Generate synthetic datasets"
+    
+  - name: "icl_baseline"
+    enabled: true
+    description: "Evaluate baseline model with ICL (no fine-tuning)"
+    
+  - name: "icl_cbm"
+    enabled: false
+    description: "Evaluate ICL + CBM approach"
+    
+  - name: "finetune"
+    enabled: false
+    description: "Fine-tune on basic ECG concepts"
+    
+  - name: "icl_finetuned"
+    enabled: false
+    description: "Evaluate fine-tuned model with ICL"
+    
+  - name: "icl_finetuned_cbm"
+    enabled: false
+    description: "Evaluate fine-tuned model with ICL + CBM"
+
+# Hypothesis validation criteria
+hypothesis:
+  premise: "ICL fails when data distribution differs from training data"
+  validation: "OOD performance should be significantly lower than in-distribution"
+  success_criteria:
+    - "In-distribution accuracy > 0.70"
+    - "OOD accuracy drop > 0.15"
+    - "Fine-tuning recovers OOD performance"
+

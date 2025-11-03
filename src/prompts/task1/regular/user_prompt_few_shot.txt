@@ -1,0 +1,31 @@
+The following sample corresponds to a physiological signal represented through symbolic sequences.
+
+Available diagnosis are:
+- "Brady"
+- "Normal"
+- "Tachy"
+
+Follow the steps below:
+1. Take your time and think carefully about patterns that distinguish each class:
+	•	Brady: 4–7 peaks (<60 bpm)
+	•	Normal: 8–11 peaks (60–100 bpm)
+	•	Tachy: 12–18 peaks (>100 bpm)
+
+To help you find the correct answer, we additionally provide you with other samples together with their label.
+Here are the example samples:
+-----------
+{examples}
+-----------
+
+2. Now have a detailed look at the sample that is provided below. Take a deep breath and compare what it to the features you learned about.
+
+Sample: {sequence}
+
+3. Finally, generate an output regarding your final thoughts. Respond in the following JSON format:
+
+{{
+  "Narrow_peaks": <number>,
+  "Wide_peaks": <number>,
+  "Total_peaks": <number>,
+  "Label": "Brady" | "Normal" | "Tachy"
+}}

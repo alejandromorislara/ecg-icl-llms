@@ -68,3 +68,8 @@ results/*.png
 results/*.jpg
 results/*.pdf
 
+# ICL outputs
+outputs/
+
+# Original ecg_icl repository (integrated into main project)
+/ecg_icl
