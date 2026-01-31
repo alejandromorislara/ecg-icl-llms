@@ -1,9 +1,3 @@
-"""
-Script to generate synthetic datasets for toy experiment (Task 1: symbolic sequences).
-
-This creates ICL examples, in-distribution test set, and out-of-distribution test set.
-"""
-
 from pathlib import Path
 import sys
 import argparse
@@ -17,7 +11,8 @@ sys.path.insert(0, str(project_root))
 from src.data.toy_data import TextGenerator, TextConfig
 
 
-def generate_toy_datasets(n_test_samples: int = 999, 
+def generate_toy_datasets(n_train_samples: int = 300,
+                         n_test_samples: int = 999, 
                          n_ood_samples: int = 300,
                          n_icl_samples: int = 8,
                          output_dir: str = "data/processed/toy_experiment"):
@@ -25,6 +20,7 @@ def generate_toy_datasets(n_test_samples: int = 999,
     Generate all datasets for toy experiment.
     
     Args:
+        n_train_samples: Number of training samples for fine-tuning (will be divided by 3 for balanced classes)
         n_test_samples: Number of test samples (will be divided by 3 for balanced classes)
         n_ood_samples: Number of OOD samples (will be divided by 3 for balanced classes)
         n_icl_samples: Number of ICL examples per class
@@ -50,6 +46,7 @@ def generate_toy_datasets(n_test_samples: int = 999,
     
     # Setup directories
     base_dir = project_root / output_dir
+    train_dir = base_dir / "train"
     icl_dir = base_dir / "icl"
     test_dir = base_dir / "test"
     
@@ -58,8 +55,16 @@ def generate_toy_datasets(n_test_samples: int = 999,
         print(f"\n🗑️  Removing existing data at {base_dir}...")
         shutil.rmtree(base_dir)
     
+    train_dir.mkdir(parents=True, exist_ok=True)
     icl_dir.mkdir(parents=True, exist_ok=True)
     test_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate training set for fine-tuning
+    print(f"\n📚 Generating training dataset ({n_train_samples} total, {n_train_samples // 3} per class)...")
+    generator.set_seed(100)  # Different seed from test/icl
+    train_dataset = generator.generate_dataset(n_samples_per_class=n_train_samples // 3)
+    generator.save_metadata_csv(train_dataset, train_dir / "metadata.csv", "train")
+    print(f"   ✅ Saved to {train_dir / 'metadata.csv'}")
     
     # Generate ICL examples
     print(f"\n🎯 Generating ICL examples ({n_icl_samples * 3} total, {n_icl_samples} per class)...")
@@ -119,6 +124,8 @@ def generate_toy_datasets(n_test_samples: int = 999,
             'artifact_prob_range': ood_config.artifact_prob_range,
         },
         'dataset_sizes': {
+            'train_per_class': n_train_samples // 3,
+            'train_total': len(train_dataset),
             'icl_per_class': n_icl_samples,
             'icl_total': n_icl_samples * 3,
             'test_total': len(test_dataset),
@@ -137,12 +144,14 @@ def generate_toy_datasets(n_test_samples: int = 999,
     print("=" * 60)
     print(f"\n📂 Output directory: {base_dir}")
     print(f"\n📊 Dataset sizes:")
+    print(f"   - Training: {len(train_dataset)} ({n_train_samples // 3} per class)")
     print(f"   - ICL examples: {len(icl_dataset)} ({n_icl_samples} per class)")
     print(f"   - Test (in-distribution): {len(test_dataset)}")
     print(f"   - Test (OOD): {len(ood_dataset)}")
     print(f"\n🎯 Next steps:")
     print(f"   1. Review the generated data in {base_dir}")
-    print(f"   2. Run ICL evaluation: python scripts/evaluate.py --task 1 --n-shots 4")
+    print(f"   2. Fine-tune model: python scripts/finetune_toy_3060.py --config configs/medgemma_finetune.yaml")
+    print(f"   3. Run ICL evaluation: python scripts/evaluate.py --task 1 --n-shots 4")
     print()
     
     return base_dir
@@ -151,6 +160,12 @@ def generate_toy_datasets(n_test_samples: int = 999,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate datasets for toy experiment (Task 1: symbolic sequences)"
+    )
+    parser.add_argument(
+        "--n-train-samples", 
+        type=int, 
+        default=300, 
+        help="Number of training samples for fine-tuning (default: 300)"
     )
     parser.add_argument(
         "--n-test-samples", 
@@ -180,6 +195,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     generate_toy_datasets(
+        n_train_samples=args.n_train_samples,
         n_test_samples=args.n_test_samples,
         n_ood_samples=args.n_ood_samples,
         n_icl_samples=args.n_icl_samples,

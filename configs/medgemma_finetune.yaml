@@ -1,0 +1,59 @@
+# Fine-tuning configuration for gemma-2b-it on RTX 3060 (12GB VRAM)
+# Task 1: Regular classification 
+
+# Model configuration
+model:
+  name: "google/gemma-2b-it"
+  torch_dtype: "float16" 
+
+# Quantization (QLoRA for memory efficiency)
+quantization:
+  load_in_4bit: true
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_use_double_quant: false
+
+# LoRA configuration
+lora:
+  r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  target_modules: "all-linear"
+  task_type: "CAUSAL_LM"
+  bias: "none"
+
+# Training configuration (optimized for RTX 3060)
+training:
+  output_dir: "outputs/finetune_toy_regular"
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8   # Reduced for more frequent updates
+  num_train_epochs: 3              # More epochs for better learning
+  learning_rate: 5.0e-5            # Lower LR for stability
+  fp16: true
+  bf16: false
+  gradient_checkpointing: true
+  max_seq_length: 512
+  logging_steps: 10
+  save_strategy: "epoch"
+  save_total_limit: 2
+  warmup_ratio: 0.1                # More warmup for stability
+  lr_scheduler_type: "cosine"      # Cosine annealing works better
+  max_grad_norm: 0.3
+  optim: "paged_adamw_8bit"
+  report_to: "none"  # Set to "tensorboard" or "wandb" if needed
+
+# Data configuration
+data:
+  train_path: "data/processed/toy_experiment/train/metadata.csv"
+  prompts_dir: "src/prompts"
+  task: 1
+  approach: "regular"
+
+# Expected output format (for reference)
+# The model should learn to generate:
+# {
+#   "Narrow_peaks": <int>,
+#   "Wide_peaks": <int>,
+#   "Total_peaks": <int>,
+#   "Label": "Brady" | "Normal" | "Tachy"
+# }

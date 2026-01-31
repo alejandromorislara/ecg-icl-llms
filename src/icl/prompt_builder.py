@@ -33,18 +33,20 @@ class PromptManager:
         else:
             self.prompts_dir = Path(prompts_dir)
     
-    def load_prompt(self, approach: str, prompt_type: str) -> str:
+    def load_prompt(self, approach: str, prompt_type: str, task: int = 1) -> str:
         """
         Load a specific prompt template.
         
         Args:
             approach: 'regular' or 'cbm' (Concept Bottleneck Model)
             prompt_type: 'system_prompt', 'user_prompt_zero_shot', 'user_prompt_few_shot'
+            task: Task number (1, 2, or 3)
         
         Returns:
             Prompt template as string
         """
-        prompt_path = self.prompts_dir / approach / f"{prompt_type}.txt"
+        # Build path: prompts_dir/task{N}/{approach}/{prompt_type}.txt
+        prompt_path = self.prompts_dir / f"task{task}" / approach / f"{prompt_type}.txt"
         
         if not prompt_path.exists():
             raise FileNotFoundError(f"Prompt not found: {prompt_path}")
@@ -139,16 +141,16 @@ Classification: {fc_class}"""
             raise ValueError(f"Invalid task {task}. Use 1, 2, or 3.")
         
         # System prompt
-        system_prompt = self.load_prompt(approach, "system_prompt")
+        system_prompt = self.load_prompt(approach, "system_prompt", task=task)
         
         # User prompt
         if examples is None or len(examples) == 0:
             # Zero-shot
-            user_template = self.load_prompt(approach, "user_prompt_zero_shot")
+            user_template = self.load_prompt(approach, "user_prompt_zero_shot", task=task)
             user_prompt = user_template.format(sequence=sequence)
         else:
             # Few-shot
-            user_template = self.load_prompt(approach, "user_prompt_few_shot")
+            user_template = self.load_prompt(approach, "user_prompt_few_shot", task=task)
             formatted_examples = self.format_few_shot_examples(examples, approach)
             user_prompt = user_template.format(
                 examples=formatted_examples,

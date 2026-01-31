@@ -77,10 +77,11 @@ def run_icl_evaluation(
     print(f"\n📦 Initializing components...")
     data_loader = ICLDataLoader(data_dir=data_path)
     
-    # Determine prompts directory based on task
-    prompts_dir = project_root / "src" / "prompts" / f"task{task}"
-    if not prompts_dir.exists():
-        print(f"\n❌ Prompts directory not found: {prompts_dir}")
+    # Determine prompts directory (task is handled inside PromptManager)
+    prompts_dir = project_root / "src" / "prompts"
+    task_prompts_dir = prompts_dir / f"task{task}"
+    if not task_prompts_dir.exists():
+        print(f"\n❌ Prompts directory not found: {task_prompts_dir}")
         print(f"   Task {task} may not be implemented yet.")
         return
     
