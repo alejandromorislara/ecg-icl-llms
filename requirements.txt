@@ -20,6 +20,14 @@ h5py>=3.9.0
 
 # LLM and API
 openai>=1.0.0
+transformers>=4.45.0
+
+# Fine-tuning (GRPO, SFT, QLoRA)
+trl>=0.12.0
+peft>=0.13.0
+bitsandbytes>=0.44.0
+accelerate>=0.34.0
+datasets>=3.0.0
 
 # Configuration and utilities
 pyyaml>=6.0
@@ -32,4 +40,3 @@ ipykernel>=6.25.0
 # Development
 pytest>=7.4.0
 black>=23.0.0
-
