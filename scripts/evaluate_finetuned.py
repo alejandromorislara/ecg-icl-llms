@@ -4,8 +4,17 @@ Evaluation script for fine-tuned models.
 This script loads a fine-tuned LoRA model and evaluates it on the test set
 without requiring an external LLM server.
 
+Supports zero-shot and few-shot (ICL) evaluation to test the model's
+in-context learning capability after fine-tuning.
+
 Usage:
-    python scripts/evaluate_finetuned.py --adapter outputs/finetune_toy_regular
+    # Zero-shot (default for fine-tuned models)
+    python scripts/evaluate_finetuned.py --adapter outputs/finetune_toy_regular --n-shots 0
+    
+    # Few-shot ICL
+    python scripts/evaluate_finetuned.py --adapter outputs/finetune_toy_regular --n-shots 4
+    
+    # OOD evaluation
     python scripts/evaluate_finetuned.py --adapter outputs/finetune_toy_regular --ood
 """
 
@@ -25,6 +34,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.icl.prompt_builder import PromptManager
+from src.data.loaders import ICLDataLoader
 
 
 def load_model_and_tokenizer(adapter_path: str, base_model: str = "google/gemma-2b-it"):
@@ -75,13 +85,19 @@ def load_test_data(data_dir: Path, ood: bool = False) -> pd.DataFrame:
     return pd.read_csv(test_file)
 
 
-def build_prompt(sequence: str, prompt_manager: PromptManager, task: int = 1) -> str:
+def build_prompt(
+    sequence: str, 
+    prompt_manager: PromptManager, 
+    task: int = 1, 
+    approach: str = "regular",
+    examples: list = None
+) -> str:
     """Build prompt for the model (Gemma format - no system role)."""
     messages = prompt_manager.build_messages(
         sequence=sequence,
         task=task,
-        approach="regular",
-        examples=None  # Zero-shot evaluation
+        approach=approach,
+        examples=examples
     )
     
     # Gemma doesn't support system role - merge into user message
@@ -145,6 +161,8 @@ def evaluate(
     data_dir: Path,
     prompts_dir: Path,
     task: int = 1,
+    n_shots: int = 0,
+    approach: str = "regular",
     ood: bool = False,
     base_model: str = "google/gemma-2b-it",
     max_samples: int = None
@@ -157,6 +175,8 @@ def evaluate(
     print(f"Adapter: {adapter_path}")
     print(f"Base model: {base_model}")
     print(f"Task: {task}")
+    print(f"N-shots: {n_shots}")
+    print(f"Approach: {approach}")
     print(f"OOD: {ood}")
     print("=" * 60)
     
@@ -171,6 +191,21 @@ def evaluate(
         test_df = test_df.head(max_samples)
     
     print(f"   Loaded {len(test_df)} test samples")
+    
+    # Initialize data loader for ICL examples
+    data_loader = ICLDataLoader(data_dir=data_dir)
+    
+    # Load ICL examples if n_shots > 0
+    icl_examples = None
+    if n_shots > 0:
+        print(f"\n Loading {n_shots} ICL examples...")
+        icl_data = data_loader.load_icl_examples(n_shots=n_shots)
+        # Format for prompt manager
+        icl_examples = [
+            {'sequence': seq, 'fc_class': fc_class}
+            for seq, fc_class in icl_data
+        ]
+        print(f"   Loaded {len(icl_examples)} ICL examples")
     
     # Initialize prompt manager
     prompt_manager = PromptManager(prompts_dir=prompts_dir)
@@ -188,8 +223,14 @@ def evaluate(
         sequence = row['sequence']
         true_label = row['label']
         
-        # Build prompt
-        messages = build_prompt(sequence, prompt_manager, task)
+        # Build prompt with ICL examples
+        messages = build_prompt(
+            sequence=sequence,
+            prompt_manager=prompt_manager,
+            task=task,
+            approach=approach,
+            examples=icl_examples
+        )
         
         # Generate response
         response = generate_response(model, tokenizer, messages)
@@ -200,6 +241,7 @@ def evaluate(
         
         # Check correctness
         is_correct = pred_label == true_label if pred_label else False
+        print(f"Correct: {is_correct}, True Label: {true_label}, Predicted: {pred_label}")
         
         if is_correct:
             correct += 1
@@ -235,7 +277,9 @@ def evaluate(
     output_dir.mkdir(parents=True, exist_ok=True)
     
     ood_suffix = "_ood" if ood else ""
-    results_file = output_dir / f"finetuned_results{ood_suffix}.csv"
+    shot_suffix = f"_{n_shots}shot" if n_shots > 0 else "_0shot"
+    approach_suffix = f"_{approach}" if approach != "regular" else ""
+    results_file = output_dir / f"finetuned{shot_suffix}{approach_suffix}_results{ood_suffix}.csv"
     
     results_df = pd.DataFrame(results)
     results_df.to_csv(results_file, index=False)
@@ -246,6 +290,8 @@ def evaluate(
         "adapter_path": str(adapter_path),
         "base_model": base_model,
         "task": task,
+        "n_shots": n_shots,
+        "approach": approach,
         "ood": ood,
         "total_samples": total,
         "correct": correct,
@@ -260,7 +306,7 @@ def evaluate(
         }
     }
     
-    summary_file = output_dir / f"finetuned_summary{ood_suffix}.json"
+    summary_file = output_dir / f"finetuned{shot_suffix}{approach_suffix}_summary{ood_suffix}.json"
     with open(summary_file, 'w') as f:
         json.dump(summary, f, indent=2)
     print(f"Summary saved to: {summary_file}")
@@ -270,7 +316,25 @@ def evaluate(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate fine-tuned model on test set"
+        description="Evaluate fine-tuned model on test set",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Zero-shot evaluation (default for fine-tuned models)
+  python scripts/evaluate_finetuned.py --adapter outputs/finetune_toy_regular --n-shots 0
+  
+  # Few-shot evaluation (test ICL capability of fine-tuned model)
+  python scripts/evaluate_finetuned.py --adapter outputs/finetune_toy_regular --n-shots 4
+  
+  # 8-shot evaluation
+  python scripts/evaluate_finetuned.py --adapter outputs/finetune_toy_regular --n-shots 8
+  
+  # Evaluate on OOD test set
+  python scripts/evaluate_finetuned.py --adapter outputs/finetune_toy_regular --ood
+  
+  # CBM approach with few-shot
+  python scripts/evaluate_finetuned.py --adapter outputs/finetune_toy_cbm --approach cbm --n-shots 4
+        """
     )
     parser.add_argument(
         "--adapter",
@@ -289,6 +353,19 @@ def main():
         type=int,
         default=1,
         help="Task number (default: 1)"
+    )
+    parser.add_argument(
+        "--n-shots",
+        type=int,
+        default=0,
+        help="Number of ICL examples (0 for zero-shot, typically 1, 2, 4, or 8)"
+    )
+    parser.add_argument(
+        "--approach",
+        type=str,
+        default="regular",
+        choices=["regular", "cbm"],
+        help="Approach: 'regular' (direct classification) or 'cbm' (concept bottleneck)"
     )
     parser.add_argument(
         "--ood",
@@ -331,6 +408,8 @@ def main():
         data_dir=data_dir,
         prompts_dir=prompts_dir,
         task=args.task,
+        n_shots=args.n_shots,
+        approach=args.approach,
         ood=args.ood,
         base_model=args.base_model,
         max_samples=args.max_samples

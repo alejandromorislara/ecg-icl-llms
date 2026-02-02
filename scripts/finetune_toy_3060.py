@@ -26,81 +26,64 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def load_train_dataset(csv_path: str, shuffle: bool = True, seed: int = 42) -> Dataset:
+def create_prompt_completion_dataset(df, prompt_manager, tokenizer, task: int = 1, approach: str = "regular"):
     """
-    Load training data from CSV file.
+    Create a prompt-completion dataset for SFTTrainer.
     
-    Expected columns: id, sequence, label, total_picos
+    This format ensures TRL only computes loss on the completion (response) part,
+    not on the prompt. This is CRITICAL for preventing class collapse.
     
-    Args:
-        csv_path: Path to CSV file
-        shuffle: Whether to shuffle the dataset (important for balanced training!)
-        seed: Random seed for reproducibility
-    """
-    df = pd.read_csv(csv_path)
-    
-    if shuffle:
-        # IMPORTANT: Shuffle to avoid catastrophic forgetting
-        # when dataset is ordered by class
-        df = df.sample(frac=1, random_state=seed).reset_index(drop=True)
-        print(f"   Shuffled dataset (seed={seed})")
-    
-    return Dataset.from_pandas(df)
-
-
-def create_formatting_func(tokenizer, prompt_manager, task: int = 1, approach: str = "regular", max_length: int = 512):
-    """
-    Create formatting function for SFTTrainer.
-    
-    This function combines the system/user prompts with the expected JSON response.
     Note: Gemma doesn't support 'system' role, so we merge system into user message.
     """
+    prompts = []
+    completions = []
     
-    def formatting_func(example):
+    for _, row in df.iterrows():
         # Build messages using PromptManager
         messages = prompt_manager.build_messages(
-            sequence=example['sequence'],
+            sequence=row['sequence'],
             task=task,
             approach=approach,
             examples=None  # Zero-shot for training
         )
         
         # Gemma doesn't support system role - merge system into user message
-        # messages[0] is system, messages[1] is user
         if len(messages) >= 2 and messages[0]['role'] == 'system':
             system_content = messages[0]['content']
             user_content = messages[1]['content']
-            # Combine system and user into a single user message
             combined_content = f"{system_content}\n\n{user_content}"
             messages = [{"role": "user", "content": combined_content}]
         
-        # Calculate expected output from sequence
-        narrow_peaks = example['sequence'].count('|')
-        wide_peaks = example['sequence'].count(':')
-        total_peaks = narrow_peaks + wide_peaks
-        label = example['label']
+        # Apply chat template for prompt (with generation prompt to signal model turn)
+        prompt = tokenizer.apply_chat_template(
+            messages, 
+            tokenize=False, 
+            add_generation_prompt=True  # This adds <start_of_turn>model\n
+        )
         
-        # Build target JSON response
-        target_json = json.dumps({
+        # Calculate expected output from sequence
+        narrow_peaks = row['sequence'].count('|')
+        wide_peaks = row['sequence'].count(':')
+        total_peaks = narrow_peaks + wide_peaks
+        label = row['label']
+        
+        # Build target JSON response (this is what the model learns to generate)
+        completion = json.dumps({
             "Narrow_peaks": narrow_peaks,
             "Wide_peaks": wide_peaks,
             "Total_peaks": total_peaks,
             "Label": label
         }, indent=2)
         
-        # Add assistant response (Gemma uses "model" role for responses)
-        messages.append({"role": "model", "content": target_json})
-        
-        # Apply chat template
-        formatted = tokenizer.apply_chat_template(
-            messages, 
-            tokenize=False, 
-            add_generation_prompt=False
-        )
-        
-        return formatted
+        prompts.append(prompt)
+        completions.append(completion)
     
-    return formatting_func
+    # Create Dataset with prompt-completion format
+    from datasets import Dataset
+    return Dataset.from_dict({
+        "prompt": prompts,
+        "completion": completions
+    })
 
 
 def main(config_path: str):
@@ -116,7 +99,7 @@ def main(config_path: str):
     
     # Lazy imports (heavy libraries)
     print("\n📦 Importing libraries...")
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, EarlyStoppingCallback
     from peft import LoraConfig, prepare_model_for_kbit_training, get_peft_model
     from trl import SFTTrainer, SFTConfig
     
@@ -201,8 +184,9 @@ def main(config_path: str):
     model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
     
-    # Load dataset
+    # Load datasets
     data_config = config['data']
+    data_dir = project_root / Path(data_config['train_path']).parent.parent
     train_path = project_root / data_config['train_path']
     print(f"\n📊 Loading training data from {train_path}...")
     
@@ -211,24 +195,48 @@ def main(config_path: str):
         print(f"   Run: python scripts/generate_toy_dataset.py --n-train-samples 300")
         sys.exit(1)
     
-    train_dataset = load_train_dataset(str(train_path))
-    print(f"   Loaded {len(train_dataset)} training samples")
-    
-    # Load training config (needed for formatting function)
+    # Load training config
     train_config = config['training']
     
     # Initialize PromptManager
     prompts_dir = project_root / data_config['prompts_dir']
     prompt_manager = PromptManager(prompts_dir=prompts_dir)
     
-    # Create formatting function
-    formatting_func = create_formatting_func(
-        tokenizer=tokenizer,
+    # Load and shuffle raw data
+    train_df = pd.read_csv(train_path)
+    train_df = train_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    print(f"   Shuffled {len(train_df)} training samples")
+    
+    # Create prompt-completion dataset
+    # CRITICAL: This format ensures TRL only computes loss on completion tokens
+    print("   Creating prompt-completion dataset (loss only on completions)...")
+    train_dataset = create_prompt_completion_dataset(
+        df=train_df,
         prompt_manager=prompt_manager,
+        tokenizer=tokenizer,
         task=data_config['task'],
-        approach=data_config['approach'],
-        max_length=train_config['max_seq_length']
+        approach=data_config['approach']
     )
+    print(f"   Created {len(train_dataset)} training examples")
+    
+    # Check class distribution in first 20 samples
+    labels_sample = [json.loads(c)["Label"] for c in train_dataset["completion"][:20]]
+    print(f"   First 20 labels: {labels_sample}")
+    
+    # Create eval dataset from test data
+    test_path = data_dir / "test" / "test_metadata.csv"
+    eval_dataset = None
+    if test_path.exists():
+        test_df = pd.read_csv(test_path)
+        eval_df = test_df.sample(n=min(100, len(test_df)), random_state=42)
+        eval_dataset = create_prompt_completion_dataset(
+            df=eval_df,
+            prompt_manager=prompt_manager,
+            tokenizer=tokenizer,
+            task=data_config['task'],
+            approach=data_config['approach']
+        )
+        print(f"   Created eval dataset with {len(eval_dataset)} samples")
     
     # Configure training
     output_dir = project_root / train_config['output_dir']
@@ -237,6 +245,9 @@ def main(config_path: str):
     total_steps = (len(train_dataset) // train_config['per_device_train_batch_size']) * train_config['num_train_epochs']
     total_steps = total_steps // train_config['gradient_accumulation_steps']
     warmup_steps = int(total_steps * train_config.get('warmup_ratio', 0.03))
+    
+    # Determine eval strategy based on whether we have eval data
+    use_early_stopping = eval_dataset is not None
     
     training_args = SFTConfig(
         output_dir=str(output_dir),
@@ -248,23 +259,44 @@ def main(config_path: str):
         bf16=False,
         gradient_checkpointing=False,  # Already enabled in prepare_model_for_kbit_training
         logging_steps=train_config['logging_steps'],
-        save_strategy=train_config['save_strategy'],
+        save_strategy="steps" if use_early_stopping else train_config['save_strategy'],
+        save_steps=50 if use_early_stopping else None,
         save_total_limit=train_config.get('save_total_limit', 2),
         warmup_steps=warmup_steps,
         lr_scheduler_type=train_config.get('lr_scheduler_type', 'linear'),
         max_grad_norm=train_config.get('max_grad_norm', 0.3),
         optim=train_config.get('optim', 'paged_adamw_8bit'),
         report_to=train_config.get('report_to', 'none'),
+        # Early stopping configuration
+        eval_strategy="steps" if use_early_stopping else "no",
+        eval_steps=50 if use_early_stopping else None,
+        load_best_model_at_end=use_early_stopping,
+        metric_for_best_model="eval_loss" if use_early_stopping else None,
+        greater_is_better=False if use_early_stopping else None,
     )
     
-    # Initialize trainer
+    # Initialize trainer with optional early stopping
     print("\n🏋️ Initializing SFTTrainer...")
+    print("   Using prompt-completion format (loss computed ONLY on completion tokens)")
+    
+    callbacks = []
+    if use_early_stopping:
+        # Early stopping: stop if eval_loss doesn't improve for 3 evaluations
+        early_stopping = EarlyStoppingCallback(
+            early_stopping_patience=3,
+            early_stopping_threshold=0.01
+        )
+        callbacks.append(early_stopping)
+        print("   Early stopping enabled (patience=3, threshold=0.01)")
+    
+    # SFTTrainer with prompt-completion format automatically computes loss only on completions
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
         processing_class=tokenizer,
-        formatting_func=formatting_func,
+        callbacks=callbacks if callbacks else None,
     )
     
     # Start training
@@ -274,6 +306,8 @@ def main(config_path: str):
     print(f"   Gradient accumulation: {train_config['gradient_accumulation_steps']}")
     print(f"   Effective batch size: {train_config['per_device_train_batch_size'] * train_config['gradient_accumulation_steps']}")
     print(f"   Learning rate: {train_config['learning_rate']}")
+    if use_early_stopping:
+        print(f"   Early stopping: enabled (eval every 50 steps, patience=3)")
     print()
     
     trainer.train()

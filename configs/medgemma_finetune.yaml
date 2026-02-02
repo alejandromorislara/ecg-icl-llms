@@ -26,9 +26,9 @@ lora:
 training:
   output_dir: "outputs/finetune_toy_regular"
   per_device_train_batch_size: 1
-  gradient_accumulation_steps: 8   # Reduced for more frequent updates
+  gradient_accumulation_steps: 4   # Smaller for more frequent updates with diverse classes
   num_train_epochs: 3              # More epochs for better learning
-  learning_rate: 5.0e-5            # Lower LR for stability
+  learning_rate: 2.0e-4            # Higher LR - now that we only train on response tokens
   fp16: true
   bf16: false
   gradient_checkpointing: true
@@ -38,7 +38,7 @@ training:
   save_total_limit: 2
   warmup_ratio: 0.1                # More warmup for stability
   lr_scheduler_type: "cosine"      # Cosine annealing works better
-  max_grad_norm: 0.3
+  max_grad_norm: 1.0               # Higher grad norm - response is short
   optim: "paged_adamw_8bit"
   report_to: "none"  # Set to "tensorboard" or "wandb" if needed
 
