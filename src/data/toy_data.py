@@ -19,9 +19,10 @@ class TextConfig:
     sequence_length: int = 100
     
     # Heart rate ranges (number of peaks in sequence) - NON-OVERLAPPING
-    brady_range: Tuple[int, int] = (4, 7)   # Bradycardia: <60 bpm
-    normal_range: Tuple[int, int] = (8, 11)  # Normal: 60-100 bpm
-    tachy_range: Tuple[int, int] = (12, 16)  # Tachycardia: >100 bpm
+    # np.randint upper bound is EXCLUSIVE: (4, 8) generates {4,5,6,7}
+    brady_range: Tuple[int, int] = (4, 8)   # Bradycardia: 4-7 peaks (<60 bpm)
+    normal_range: Tuple[int, int] = (8, 12)  # Normal: 8-11 peaks (60-100 bpm)
+    tachy_range: Tuple[int, int] = (12, 17)  # Tachycardia: 12-16 peaks (>100 bpm)
     
     # Noise and artifact probability ranges
     noise_prob_range: Tuple[float, float] = (0.05, 0.25)

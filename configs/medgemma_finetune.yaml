@@ -1,10 +1,11 @@
 # Fine-tuning configuration for gemma-2b-it on RTX 3060 (12GB VRAM)
-# Task 1: Regular classification 
+# Task 1: Regular classification
+# Dataset: 1500 samples (500 per class) with conversational format
 
 # Model configuration
 model:
   name: "google/gemma-2b-it"
-  torch_dtype: "float16" 
+  torch_dtype: "float16"
 
 # Quantization (QLoRA for memory efficiency)
 quantization:
@@ -26,9 +27,9 @@ lora:
 training:
   output_dir: "outputs/finetune_toy_regular"
   per_device_train_batch_size: 1
-  gradient_accumulation_steps: 4   # Smaller for more frequent updates with diverse classes
-  num_train_epochs: 3              # More epochs for better learning
-  learning_rate: 2.0e-4            # Higher LR - now that we only train on response tokens
+  gradient_accumulation_steps: 4
+  num_train_epochs: 3
+  learning_rate: 2.0e-4
   fp16: true
   bf16: false
   gradient_checkpointing: true
@@ -36,11 +37,11 @@ training:
   logging_steps: 10
   save_strategy: "epoch"
   save_total_limit: 2
-  warmup_ratio: 0.1                # More warmup for stability
-  lr_scheduler_type: "cosine"      # Cosine annealing works better
-  max_grad_norm: 1.0               # Higher grad norm - response is short
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+  max_grad_norm: 1.0
   optim: "paged_adamw_8bit"
-  report_to: "none"  # Set to "tensorboard" or "wandb" if needed
+  report_to: "none"
 
 # Data configuration
 data:
@@ -49,11 +50,11 @@ data:
   task: 1
   approach: "regular"
 
-# Expected output format (for reference)
-# The model should learn to generate:
-# {
-#   "Narrow_peaks": <int>,
-#   "Wide_peaks": <int>,
-#   "Total_peaks": <int>,
-#   "Label": "Brady" | "Normal" | "Tachy"
-# }
+# Training format (conversational, as per tutor's specification):
+# System: "You are a text-based ECG analyzer. Count the characters '|' (narrow
+#          R-wave peaks) and ':' (wide T-wave peaks). Sum both to get the total.
+#          Classify as: Brady [4-7], Normal [8-11], Tachy [12-16]."
+# User:   "Sequence: {sequence}"
+# Assistant: {"Narrow_peaks": N, "Wide_peaks": N, "Total_peaks": N, "Label": "..."}
+#
+# Note: System prompt is merged into user message for Gemma (no system role support)
